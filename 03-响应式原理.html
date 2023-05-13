@@ -1,45 +1,213 @@
 <!DOCTYPE html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta http-equiv="X-UA-Compatible" content="IE=edge">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Document</title>
-</head>
-<body>
-  <script>
-    let activeEffect;
-    const data = {text:'jiabin'}
-    const bucket = new Set()
-   
-    const proxyData = new Proxy(data,{
-      get(target,key){
-        if(activeEffect){
-          bucket.add(activeEffect);
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Document</title>
+  </head>
+  <body>
+    <script>
+      let activeEffect; // 为了解决effect硬编码;effect的栈顶元素
+      const effectStack = []; // effect栈，用于实现可嵌套的effect
+      const data = { ok: true, text: "jiabin", num: 1, foo: 1, bar: 4 };
+      const bucket = new WeakMap();
+      const jobQueue = new Set(); // 将来要添加到微队列的任务集合
+      const p = Promise.resolve(); // 利用then()向微队列里添加任务
+      let isFlushing = false;
+
+      // 追踪函数，在get拦截器调用，负责追踪变化
+      function track(target, key) {
+        if (!activeEffect) return target[key];
+        let depsMap = bucket.get(target);
+        if (!depsMap) {
+          bucket.set(target, (depsMap = new Map()));
         }
-
-        return target[key]
-      },
-      set(target,key,newVal){
-        target[key] = newVal
-        bucket.forEach((fn)=>fn());
-        return true;
+        let deps = depsMap.get(key);
+        if (!deps) {
+          depsMap.set(key, (deps = new Set()));
+        }
+        deps.add(activeEffect);
+        // 收集包含当前副作用函数的依赖集合
+        activeEffect.deps.push(deps);
       }
-    })
 
-    // 注册并执行副作用函数
-    function effect(fn){
-      activeEffect = fn
-      fn();
-    }
+      // 触发函数，在set拦截器内调用，负责触发变化
+      function trigger(target, key, newVal) {
+        target[key] = newVal;
+        let depsMap = bucket.get(target);
+        if (!depsMap) return;
+        const effects = depsMap.get(key);
+        const effectsToRun = new Set();
+        // 筛选掉与正在执行副作用函数相同的函数，避免无限递归循环
+        effects &&
+          effects.forEach((fn) => {
+            if (fn !== activeEffect) {
+              effectsToRun.add(fn);
+            }
+          });
+        effectsToRun.forEach((fn) => {
+          if (fn.options.scheduler) {
+            fn.options.scheduler(fn); // 调度执行fn
+          } else {
+            fn();
+          }
+        });
+      }
 
-    effect(()=>{
-      console.log('run effect');
-      document.body.innerText = proxyData.text
-    } )
-    setTimeout(()=>{
-      proxyData.no = 'zhangqing'
-    },1000)
-  </script>
-</body>
+      // 清空桶子中的该副作用函数
+      function cleanup(effectFn) {
+        for (let i = 0; i < effectFn.deps.length; i++) {
+          const deps = effectFn.deps[i];
+          deps.delete(effectFn);
+        }
+        effectFn.deps.length = 0; // 所属依赖集合的数组置空
+      }
+
+      // 刷新队列，isFlushing是个锁，当正在刷新时，无论调用多少次flushJob都无效
+      function flushJob() {
+        if (isFlushing) return;
+        isFlushing = true;
+        // 将副作用函数放在微队列里，当主线程任务执行完后（这一波响应式数据更新完后），再执行jobQueue里存储的副作用函数
+        p.then(() => jobQueue.forEach((fn) => fn())).finally(
+          () => (isFlushing = false)
+        );
+      }
+
+      // 实现计算属性
+      function computed(getter) {
+        let value; // 用来缓存上次计算的值
+        let dirty = true;
+        const effectFn = effect(getter, {
+          lazy: true,
+          scheduler() {
+            // 当修改了计算属性依赖的值时，trigger函数会执行这个调度器函数，下次读取计算属性就不是缓存值而是最新值
+            if (!dirty) {
+              dirty = true;
+              trigger(obj, "value");
+            }
+          },
+        });
+        const obj = {
+          get value() {
+            if (dirty) {
+              value = effectFn();
+              dirty = false;
+            }
+            // 当读取 value 的时候，因为obj不是响应式的proxy，需要手动调用track及进行追踪，把使用到计算属性的副作用函数放桶里
+            track(obj, "value");
+            return value;
+          },
+        };
+        return obj;
+      }
+
+      // 实现监听器
+      function watch(source, cb) {
+        // 副作用函数必须要return监听的source，否则没法拿到newVal和oldVal
+        let getter, newVal, oldVal;
+        if (typeof source === "function") {
+          getter = source;
+        } else {
+          getter = () => traverse(source);
+        }
+        const effectFn = effect(() => getter(), {
+          scheduler() {
+            newVal = effectFn(); // 在scheduler中执行副作用函数，得到的是新值
+            cb(newVal, oldVal); // 将新值和旧值作为回调的参数
+            oldVal = newVal; // 更新旧值，否则下一次更新会拿到错误的旧值
+          },
+          lazy: true, // 为了可以手动调用副作用函数，拿到新值和旧值
+        });
+        oldVal = effectFn(); // 手动调用副作用函数，拿到旧值
+      }
+
+      // dfs遍历对象这个图，之所以说是图而不是树，是因为对象之间可能存在循环引用
+      function traverse(value, seen = new Set()) {
+        // 如果当前读取的是原始值，或者已经被读取过了，或者不是原始值但却是null，那么什么都不做
+        if (
+          typeof value !== "object" ||
+          seen.has(value) ||
+          Object.prototype.toString.call(value) == "[object Null]"
+        ) {
+          return;
+        }
+        // 将已经读取过的值记录下来，避免循环引用引法的死循环
+        seen.add(value);
+        for (const key in value) {
+          traverse(value[key], seen); // 正因有深层次遍历，所以watch默认是深层次监听的
+        }
+        return value;
+      }
+
+      const proxyData = new Proxy(data, {
+        get(target, key) {
+          track(target, key);
+          return target[key];
+        },
+        set(target, key, newVal) {
+          trigger(target, key, newVal);
+          return true;
+        },
+      });
+
+      // 注册并执行副作用函数
+      function effect(fn, options = {}) {
+        const effectFn = () => {
+          cleanup(effectFn); // 每次调用副作用函数前，先清空把该函数从其所在的依赖集合中删掉
+          activeEffect = effectFn; // 函数声明时，函数所指的内存就已经分配好了，所以可以在函数内部使用这个函数名所指的内存空间
+          effectStack.push(activeEffect); // 入栈
+          const res = fn(); // 收集真正的副作用函数的返回值
+          effectStack.pop(); // 出栈
+          activeEffect = effectStack[effectStack.length - 1]; // 更新栈顶元素
+          return res; // 返回真正的副作用函数的返回值
+        };
+        // deps是个数组，用来存放包含当前副作用函数fn的依赖集合
+        // 由于deps需要与不同的副作用函数有对应关系，最好的做法是把这个数组作为其对应函数的属性
+        effectFn.deps = [];
+        effectFn.options = options;
+        if (!options.lazy) {
+          effectFn();
+        }
+        return effectFn;
+      }
+
+      effect(
+        () => {
+          // 由于使用了变量，变量是会变的，我们想要他每次变化时我们都能执行这个函数
+          console.log(proxyData.num);
+          document.body.innerText = proxyData.ok ? proxyData.text : "not";
+        },
+        {
+          // 调度器，控制副作用函数的执行时机和方式
+          scheduler(fn) {
+            jobQueue.add(fn); //利用Set的自动去重特性
+            flushJob();
+          },
+        }
+      );
+
+      // 控制副作用函数执行次数。像这样在短时间内多次改变响应数据，只执行一次副作用函数
+      proxyData.num++;
+      proxyData.num++;
+
+      // setTimeout(()=>{
+      //   proxyData.ok=false
+      //   proxyData.text = 'zhangqing'
+      // },1000)
+      const computeObj = {};
+      const sumRes = computed(() => proxyData.foo + proxyData.bar);
+      effect(() => {
+        console.log(sumRes.value);
+      });
+      proxyData.foo++;
+
+      // 测试监听器(可监听响应式对象、getter函数)
+      watch(
+        () => proxyData.text,
+        (newVal, oldVal) => console.log("@@测试监听器", newVal, oldVal)
+      );
+      proxyData.text = "doubao";
+    </script>
+  </body>
 </html>
