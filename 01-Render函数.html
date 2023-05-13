@@ -8,24 +8,38 @@
 </head>
 <body>
   <script>
-    // {tag:,children:[{},{}]|'string'}
+    /*
+    @author jiabin
+    @description v-node -> 真实dom，本质上是树的前序遍历 
+    */
+    
     function Render(obj,root){
       // 输入虚拟DOM，和真实DOM根节点root，将构造出的真实DOM元素挂载到root上
       const el = document.createElement(obj.tag)
-      if(typeof obj.children==='string'){
-        const text = document.createTextNode(obj.children);
+      if(obj.props){
+        for(key in obj.props){
+          if(/^on/.test(key)){
+            el.addEventListener(key.substring(2).toLowerCase(),obj.props[key])
+            console.log(obj.props[key]);
+          }
+        }
+      }
+      if(typeof obj.children === 'string'){
+        const text = document.createTextNode(obj.children)
         el.appendChild(text)
-      }else if(obj.children){
+      }else if (obj.children){
         obj.children.forEach((child)=>Render(child,el))
       }
-      root.appendChild(el);
+      root.appendChild(el)
     }
-
-    // 虚拟DOM
+    
     const obj = {
       tag:'div',
       children:[{
         tag:'p',
+        props:{
+          onClick:()=>alert('It\'s me'),
+        },
         children:'Jiabin'
       },{
         tag:'span',
