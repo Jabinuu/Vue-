@@ -102,24 +102,47 @@
         return obj;
       }
 
-      // 实现监听器
-      function watch(source, cb) {
+      // 实现监听器。本质上就是对effect的封装
+      function watch(source, cb, options = {}) {
         // 副作用函数必须要return监听的source，否则没法拿到newVal和oldVal
-        let getter, newVal, oldVal;
+        let getter;
         if (typeof source === "function") {
           getter = source;
         } else {
           getter = () => traverse(source);
         }
+        let newVal, oldVal;
+        let cleanup;
+        function onInvalidate(fn) {
+          cleanup = fn;
+        }
+        // 因为立即执行watch回调和后续执行没有本质上的区别，所以可以封装成一个函数
+        const job = () => {
+          newVal = effectFn(); // 在scheduler中执行副作用函数，得到的是新值
+          if (cleanup) {
+            cleanup();
+          }
+          cb(newVal, oldVal, onInvalidate); // 将新值和旧值作为回调的参数
+          oldVal = newVal; // 回调函数执行完毕后，更新旧值。否则下一次更新会拿到错误的旧值
+        };
         const effectFn = effect(() => getter(), {
+          lazy: true, // 为了可以手动调用副作用函数，拿到新值和旧值,=
           scheduler() {
-            newVal = effectFn(); // 在scheduler中执行副作用函数，得到的是新值
-            cb(newVal, oldVal); // 将新值和旧值作为回调的参数
-            oldVal = newVal; // 更新旧值，否则下一次更新会拿到错误的旧值
+            // 如果在调度函数中判断flush为‘post’，如果是，则把回调放到微任务队列执行
+            if (options.flush === "post") {
+              const p = Promise.resolve();
+              p.then(job);
+            } else {
+              job(); // 默认情况下flush为sync，即同步执行
+            }
           },
-          lazy: true, // 为了可以手动调用副作用函数，拿到新值和旧值
         });
-        oldVal = effectFn(); // 手动调用副作用函数，拿到旧值
+        if (options.immediate) {
+          // 立即执行job函数，从而触发回调执行
+          job();
+        } else {
+          oldVal = effectFn(); // 手动调用副作用函数，拿到旧值。如果是立即执行回调则不拿旧值，应为undefined
+        }
       }
 
       // dfs遍历对象这个图，之所以说是图而不是树，是因为对象之间可能存在循环引用
@@ -187,15 +210,17 @@
         }
       );
 
-      // 控制副作用函数执行次数。像这样在短时间内多次改变响应数据，只执行一次副作用函数
-      proxyData.num++;
-      proxyData.num++;
-
+      // 测试响应式
       // setTimeout(()=>{
       //   proxyData.ok=false
       //   proxyData.text = 'zhangqing'
       // },1000)
-      const computeObj = {};
+
+      // 测试控制副作用函数执行次数。像这样在短时间内多次改变响应数据，只执行一次副作用函数
+      proxyData.num++;
+      proxyData.num++;
+
+      // 测试计算属性
       const sumRes = computed(() => proxyData.foo + proxyData.bar);
       effect(() => {
         console.log(sumRes.value);
@@ -205,7 +230,8 @@
       // 测试监听器(可监听响应式对象、getter函数)
       watch(
         () => proxyData.text,
-        (newVal, oldVal) => console.log("@@测试监听器", newVal, oldVal)
+        (newVal, oldVal) => console.log("@@测试监听器", newVal, oldVal),
+        { immediate: true }
       );
       proxyData.text = "doubao";
     </script>
