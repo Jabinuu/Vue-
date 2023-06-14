@@ -18,6 +18,7 @@
 
       // 追踪函数，在get拦截器调用，负责追踪变化
       function track(target, key) {
+        console.log("chuaf");
         if (!activeEffect) return target[key];
         let depsMap = bucket.get(target);
         if (!depsMap) {
@@ -198,7 +199,6 @@
       effect(
         () => {
           // 由于使用了变量，变量是会变的，我们想要他每次变化时我们都能执行这个函数
-          console.log(proxyData.num);
           document.body.innerText = proxyData.ok ? proxyData.text : "not";
         },
         {
@@ -211,29 +211,29 @@
       );
 
       // 测试响应式
-      // setTimeout(()=>{
-      //   proxyData.ok=false
-      //   proxyData.text = 'zhangqing'
-      // },1000)
+      setTimeout(() => {
+        proxyData.ok = true;
+        proxyData.text = "zhangqing";
+      }, 1000);
 
       // 测试控制副作用函数执行次数。像这样在短时间内多次改变响应数据，只执行一次副作用函数
       proxyData.num++;
       proxyData.num++;
 
       // 测试计算属性
-      const sumRes = computed(() => proxyData.foo + proxyData.bar);
-      effect(() => {
-        console.log(sumRes.value);
-      });
-      proxyData.foo++;
+      // const sumRes = computed(() => proxyData.foo + proxyData.bar);
+      // effect(() => {
+      //   console.log(sumRes.value);
+      // });
+      // proxyData.foo++;
 
       // 测试监听器(可监听响应式对象、getter函数)
-      watch(
-        () => proxyData.text,
-        (newVal, oldVal) => console.log("@@测试监听器", newVal, oldVal),
-        { immediate: true }
-      );
-      proxyData.text = "doubao";
+      // watch(
+      //   () => proxyData.text,
+      //   (newVal, oldVal) => console.log("@@测试监听器", newVal, oldVal),
+      //   { immediate: true }
+      // );
+      // proxyData.text = "doubao";
     </script>
   </body>
 </html>
