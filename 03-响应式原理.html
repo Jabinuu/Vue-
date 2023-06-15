@@ -186,6 +186,7 @@
       }
 
       const proxyData = new Proxy(data, {
+        // 定义proxy对象的过程就是自定义proxy对象内部方法[[GET]]、[[SET]]的过程
         get(target, key) {
           track(target, key);
           return target[key];
