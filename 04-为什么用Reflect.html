@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Document</title>
+  </head>
+  <body>
+    <script>
+      // 直接访问对象的属性会是怎样的？
+      let obj = {
+        foo: "jiabin",
+        get bar() {
+          console.log(this);
+          return this.foo; // 注意分析this的指向：this指向代理对象时才是响应式，指向源对象obj的话不会建立响应式
+        },
+      };
+      const ProxyData = new Proxy(obj, {
+        // target是源对象obj，obj.bar 那么它的getter函数的this指向的是obj
+        get(target, key) {
+          return target[key]; // 等价于Reflect.get(target,key)
+        },
+      });
+      ProxyData.bar;
+
+      // 如果用Reflect的话呢？
+      let obj1 = {
+        foo: "jiabin",
+        get bar() {
+          console.log(this); // 这里this指向了代理对象，从而建立了响应式
+          return this.foo;
+        },
+      };
+      const ProxyData1 = new Proxy(obj1, {
+        //get的第三个参数receiver是指读取这个属性的对象，在这里是ProxyData1
+        get(target, key, receiver) {
+          // Refelect.get的第三个参数作用类似于函数中的this，即读取的是recevier对象的key属性，而不是target
+          return Reflect.get(target, key, receiver);
+        },
+      });
+      ProxyData1.bar;
+      // 所以，使用Reflect.get读取对象属性和直接读取对象属性的区别在于能否给源对象带绿帽子
+    </script>
+  </body>
+</html>

@@ -18,7 +18,6 @@
 
       // 追踪函数，在get拦截器调用，负责追踪变化
       function track(target, key) {
-        console.log("chuaf");
         if (!activeEffect) return target[key];
         let depsMap = bucket.get(target);
         if (!depsMap) {
@@ -164,17 +163,6 @@
         return value;
       }
 
-      const proxyData = new Proxy(data, {
-        get(target, key) {
-          track(target, key);
-          return target[key];
-        },
-        set(target, key, newVal) {
-          trigger(target, key, newVal);
-          return true;
-        },
-      });
-
       // 注册并执行副作用函数
       function effect(fn, options = {}) {
         const effectFn = () => {
@@ -184,6 +172,7 @@
           const res = fn(); // 收集真正的副作用函数的返回值
           effectStack.pop(); // 出栈
           activeEffect = effectStack[effectStack.length - 1]; // 更新栈顶元素
+
           return res; // 返回真正的副作用函数的返回值
         };
         // deps是个数组，用来存放包含当前副作用函数fn的依赖集合
@@ -195,6 +184,17 @@
         }
         return effectFn;
       }
+
+      const proxyData = new Proxy(data, {
+        get(target, key) {
+          track(target, key);
+          return target[key];
+        },
+        set(target, key, newVal) {
+          trigger(target, key, newVal);
+          return true;
+        },
+      });
 
       effect(
         () => {
@@ -217,8 +217,8 @@
       }, 1000);
 
       // 测试控制副作用函数执行次数。像这样在短时间内多次改变响应数据，只执行一次副作用函数
-      proxyData.num++;
-      proxyData.num++;
+      // proxyData.num++;
+      // proxyData.num++;
 
       // 测试计算属性
       // const sumRes = computed(() => proxyData.foo + proxyData.bar);
